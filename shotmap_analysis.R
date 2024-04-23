@@ -2,10 +2,12 @@ library(data.table)
 library(ggplot2)
 library(viridis)
 library(gridExtra)
+library(ggridges)
 
 
 load("Allsv23Shotmaps.rda")
 load("Allsv23Games.rda")
+load("Allsv23PlayerData.rda")
 
 load("Allsv23Heatmap.rda")
 hmTable23 = hmTable
@@ -23,7 +25,7 @@ squadAge_Theme = theme(panel.background = element_rect(fill = "grey30", color = 
                        strip.background = element_rect(fill = "grey30"), strip.text = element_text(size = 14, color = "lemonchiffon3"))
 
 # Structured shot data
-shotMap_w_xg = function(data, games){
+shotMap_w_xg = function(data, dataPlayer, games){
   tempDT = list()
   for(i in 1:length(data)){
     tempSM = data.table(data[[i]]$shotmap)
@@ -43,6 +45,27 @@ shotMap_w_xg = function(data, games){
     
     tempSM[isHome == TRUE, Opponent := strsplit(games[[i]], split = " - ")[[1]][2]]
     tempSM[isHome == FALSE, Opponent := strsplit(games[[i]], split = " - ")[[1]][1]]
+    
+    homeGK = data.table(dataPlayer[[i]]$home$players)[player.position == "G" & !is.na(statistics.minutesPlayed)]
+    awayGK = data.table(dataPlayer[[i]]$away$players)[player.position == "G" & !is.na(statistics.minutesPlayed)]
+    
+    if(homeGK[, .N] == 1){
+      tempSM[isHome == FALSE, Goalkeeper := homeGK[, player.shortName]]
+    }else{
+      tempSM[isHome == FALSE & time <= homeGK[substitute == FALSE, statistics.minutesPlayed],
+             Goalkeeper := homeGK[substitute == FALSE, player.shortName]]
+      tempSM[isHome == FALSE & time > homeGK[substitute == FALSE, statistics.minutesPlayed],
+             Goalkeeper := homeGK[substitute == TRUE, player.shortName]]
+    }
+    
+    if(awayGK[, .N] == 1){
+      tempSM[isHome == TRUE, Goalkeeper := awayGK[, player.shortName]]
+    }else{
+      tempSM[isHome == TRUE & time <= awayGK[substitute == FALSE, statistics.minutesPlayed],
+             Goalkeeper := awayGK[substitute == FALSE, player.shortName]]
+      tempSM[isHome == TRUE & time > awayGK[substitute == FALSE, statistics.minutesPlayed],
+             Goalkeeper := awayGK[substitute == TRUE, player.shortName]]
+    }
     
     tempDT[[i]] = tempSM
     
@@ -73,7 +96,7 @@ shotMap_w_xg = function(data, games){
   return(tempDT)
 }
 
-shotMapDT23 = shotMap_w_xg(data = Allsv23Shotmaps, games = Games23)
+shotMapDT23 = shotMap_w_xg(data = Allsv23Shotmaps, dataPlayer = Allsv23, games = Games23)
 
 shotMapDT23 = shotMapDT23[(goalType == "own") == FALSE | is.na(goalType) ]
 
@@ -218,6 +241,45 @@ p3 = ggplot(plot_type, aes(x = variable, y = value * 100)) +
 grid.arrange(p1, p2, p3, ncol = 1)
 
 
+gk_summary23 = shotMapDT23[situation2 != "penalty", .(.N, Goals = sum(Goal), xG = sum(xG),
+                                                       distCenter = mean(distCenter), angleGoal = mean(angleGoal)),
+                            .(Goalkeeper, Team = Opponent)]
+
+gk_data23 = shotMapDT23[situation2 != "penalty", .(Goalkeeper, game, Team = Opponent, x2, y2, distCenter, angleGoal, situation2,
+                bodyPart2, xG, Goal)]
+
+gk_data23[, Goalkeeper2 := factor(Goalkeeper, levels = 
+                                    gk_data23[Goal == TRUE & situation2 != "set-piece",
+                                         .(distCenter = median(distCenter), .N), Goalkeeper][order(distCenter), Goalkeeper]
+                                 )]
+
+ggplot(gk_data23[Goal == TRUE & Goalkeeper %in% gk_summary[Goals > 10, Goalkeeper] & situation2 != "set-piece"],
+       aes(x = distCenter, y = Goalkeeper2, fill = 0.5 - abs(0.5 - stat(ecdf)))) +
+  stat_density_ridges(geom = "density_ridges_gradient", calc_ecdf = TRUE, scale = 1) +
+  scale_fill_viridis(direction = -1, guide = "none")  +
+  squadAge_Theme +
+  xlim(c(0, 40)) 
+
+
+gk_data23[, Goalkeeper2 := factor(Goalkeeper, levels = 
+                                    gk_data23[Goal == TRUE & situation2 != "set-piece",
+                                          .(xG = median(xG), .N), Goalkeeper][order(xG), Goalkeeper]
+)]
+
+ggplot(gk_data23[Goal == TRUE & Goalkeeper %in% gk_summary[Goals > 10, Goalkeeper] & situation2 != "set-piece"],
+       aes(x = xG, y = Goalkeeper2, fill = 0.5 - abs(0.5 - stat(ecdf)))) +
+  stat_density_ridges(geom = "density_ridges_gradient", calc_ecdf = TRUE, scale = 1) +
+  scale_fill_viridis(direction = -1, guide = "none")  +
+  squadAge_Theme 
+
+
+
+
 
 save(shots_summary, file = "shots_summary.rda")
 save(shotMapDT23, file = "shotMapDT23.rda")
+save(gk_data23, file = "gk_data23.rda")
+save(gk_summary23, file = "gk_summary23.rda")
+
+
+

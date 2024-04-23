@@ -7,21 +7,23 @@ library(stringr)
 library(jsonlite)
 library(rvest)
 library(parsedate)
+library(RCurl)
 
-load("Allsv23Games.rda")
-load("Allsv23Heatmap.rda")
-load("Allsv23PlayerData.rda")
-# load("Odds22.rda")
-load("Allsv23TeamData.rda")
-load("GamesDate23.rda")
-load("Allsv23Shotmaps.rda")
+
+# load("Allsv23Games.rda")
+# load("Allsv23Heatmap.rda")
+# load("Allsv23PlayerData.rda")
+# # load("Odds22.rda")
+# load("Allsv23TeamData.rda")
+# load("GamesDate23.rda")
+# load("Allsv23Shotmaps.rda")
 
 source("sofascoreFunc.R")
 
 # Step 1, get URL to each game
 urlData = data.frame(slug = as.character(), customId = as.numeric(), ID = as.numeric(), Date = as.character(), 
                      Status = as.character(), homeTeam = as.character(), awayTeam = as.character())
-Date = seq(as.Date("2023-10-20"), as.Date("2023-11-12"), 1)
+Date = seq(as.Date("2024-03-30"), as.Date("2024-04-22"), 1)
 for(i in as.character(Date)){
   x <- fromJSON(paste("https://api.sofascore.com/api/v1/sport/football/scheduled-events/", i, sep = ""))
   
@@ -50,13 +52,13 @@ urlData$url = paste("https://www.sofascore.com/sv/", urlData$slug, "/", urlData$
 # urlData = urlData[c(2:4, 6)]
 
 GamesDate <- c(GamesDate, parse_date(as.character(urlData$Date)))
-save(GamesDate, file = "GamesDate23.rda")
+save(GamesDate, file = "GamesDate24.rda")
 
-k = length(Allsv23)
+k = length(Allsv24)
 for(i in 1:nrow(urlData)){
   k = k+1
   x <- fromJSON(paste("https://api.sofascore.com/api/v1/event/", urlData[i, ID], "/lineups", sep = ""))
-  Allsv23[[k]] <- x 
+  Allsv24[[k]] <- x 
   print(i)
 }
 
@@ -64,7 +66,7 @@ k = length(Games23)
 for(i in 1:nrow(urlData)){
   k = k+1
   #x <- fromJSON(paste("http://www.sofascore.com/event/", urlData[i, ID], "/json", sep = ""))
-  Games23[[k]] <- urlData[i, paste(homeTeam, "-", awayTeam)]
+  Games24[[k]] <- urlData[i, paste(homeTeam, "-", awayTeam)]
 }
 
 # for(i in 1:nrow(urlData)){
@@ -89,37 +91,46 @@ for(i in 1:nrow(urlData)){
 # }
 # save(Odds21, file = "Odds21.rda")
 
-k = length(Allsv23TeamStats)
+k = length(Allsv24TeamStats)
 for(i in 1:nrow(urlData)){
   k = k+1
   x <- fromJSON(paste("https://api.sofascore.com/api/v1/event/", urlData[i, ID], "/statistics", sep = ""))
-  Allsv23TeamStats[[k]] <- x
+  Allsv24TeamStats[[k]] <- x
 }
 
-k = length(Allsv23Shotmaps)
+k = length(Allsv24Shotmaps)
 for(i in 1:nrow(urlData)){
   k = k+1
   x <- fromJSON(paste("https://api.sofascore.com/api/v1/event/", urlData[i, ID], "/shotmap", sep = ""))
-  Allsv23Shotmaps[[k]] <- x
+  Allsv24Shotmaps[[k]] <- x
 }
 
+testUrl = tryCatch(
+  fromJSON(url)$heatmap,
+  error=function(e) e
+)
+inherits(testUrl, "error") == FALSE
 
 hmList = list()
 k = 0
-g = length(Allsv23) - nrow(urlData)
+g = length(Allsv24) - nrow(urlData)
 for(i in 1:nrow(urlData)){
   g = g+1
-  homeTeam = strsplit(Games23[[g]], split = " - ")[[1]][1]
-  awayTeam = strsplit(Games23[[g]], split = " - ")[[1]][2]
+  homeTeam = strsplit(Games24[[g]], split = " - ")[[1]][1]
+  awayTeam = strsplit(Games24[[g]], split = " - ")[[1]][2]
   
-  tempPlayerIDHome = data.table(Allsv23[[g]]$home$players$player[, c("name", "id")])
-  minPlayed = Allsv23[[g]]$home$players$statistics$minutesPlayed
+  tempPlayerIDHome = data.table(Allsv24[[g]]$home$players$player[, c("name", "id")])
+  minPlayed = Allsv24[[g]]$home$players$statistics$minutesPlayed
   tempPlayerIDHome = tempPlayerIDHome[which(!is.na(minPlayed) & minPlayed > 1)]
   minPlayed = minPlayed[which(!is.na(minPlayed) & minPlayed > 1)]
   for(h in 1:tempPlayerIDHome[, .N]){
     url = paste("https://api.sofascore.com/api/v1/event/", urlData[i, ID], "/player/", tempPlayerIDHome[h, id],
                 "/heatmap", sep = "")
-    if(is.list(url_works(url))){
+    testUrl = tryCatch(
+      fromJSON(url)$heatmap,
+      error=function(e) e
+    )
+    if(inherits(testUrl, "error") == FALSE){
       heatMap <- data.table(fromJSON(url)$heatmap)
       heatMap[, Player := tempPlayerIDHome[h, name]]
       heatMap[, Min := minPlayed[h]]
@@ -130,14 +141,18 @@ for(i in 1:nrow(urlData)){
     }
   }
   
-  tempPlayerIDAway = data.table(Allsv23[[g]]$away$players$player[, c("name", "id")])
-  minPlayed = Allsv23[[g]]$away$players$statistics$minutesPlayed
+  tempPlayerIDAway = data.table(Allsv24[[g]]$away$players$player[, c("name", "id")])
+  minPlayed = Allsv24[[g]]$away$players$statistics$minutesPlayed
   tempPlayerIDAway = tempPlayerIDAway[which(!is.na(minPlayed) & minPlayed > 1)]
   minPlayed = minPlayed[which(!is.na(minPlayed) & minPlayed > 1)]
   for(h in 1:tempPlayerIDAway[, .N]){
     url = paste("https://api.sofascore.com/api/v1/event/", urlData[i, ID], "/player/", tempPlayerIDAway[h, id],
                 "/heatmap", sep = "")
-    if(is.list(url_works(url))){
+    testUrl = tryCatch(
+      fromJSON(url)$heatmap,
+      error=function(e) e
+    )
+    if(inherits(testUrl, "error") == FALSE){
       heatMap <- data.table(fromJSON(url)$heatmap)
       heatMap[, Player := tempPlayerIDAway[h, name]]
       heatMap[, Min := minPlayed[h]]
@@ -154,12 +169,12 @@ hmTableTemp <-  rbindlist(hmList)
 hmTable = rbindlist(list(hmTable, hmTableTemp), fill = TRUE)
 hmTable[, range(x)]; hmTable[, range(y)]
 
-save(hmTable, file = "Allsv23Heatmap.rda")
+save(hmTable, file = "Allsv24Heatmap.rda")
 
-save(Games23, file = "Allsv23Games.rda")
-save(Allsv23, file = "Allsv23PlayerData.rda")
-save(Allsv23TeamStats, file = "Allsv23TeamData.rda")
-save(Allsv23Shotmaps, file = "Allsv23Shotmaps.rda")
+save(Games24, file = "Allsv24Games.rda")
+save(Allsv24, file = "Allsv24PlayerData.rda")
+save(Allsv24TeamStats, file = "Allsv24TeamData.rda")
+save(Allsv24Shotmaps, file = "Allsv24Shotmaps.rda")
 
 
 gameHeatmap(ind = 16, allsvData = Allsv22, Games = Games22)

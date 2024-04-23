@@ -6,6 +6,11 @@ library(gridExtra)
 library(grid)
 library(marginaleffects)
 
+mround = function(x, base){
+  res = base * round(x/base)
+  return(res)
+}
+
 # xG Model - Check
 # Shotmap - Check
 # Shotmap team - Check
@@ -43,10 +48,12 @@ load("Allsv22Shotmaps.rda")
 load("Allsv22Games.rda")
 Games22 = as.list(Games22)
 shDT22 = xgDT(Allsv22Shotmaps, Games22)
+shDT22[, season := 2022]
 
 load("Allsv23Shotmaps.rda")
 load("Allsv23Games.rda")
 shDT23 = xgDT(Allsv23Shotmaps, Games23)
+shDT23[, season := 2023]
 
 shotMapDT = rbind(shDT22, shDT23)
 
@@ -207,10 +214,11 @@ ggplot(season_xG,
 
 
 # State data
+
   # Sign for home/away, then time at each state
 state_data = list()
-for(i in 1:length(Allsv22Shotmaps)){
-  temp = shotMapDT[game == i][order(timeSeconds)]
+for(i in 1:length(Allsv23Shotmaps)){
+  temp = shotMapDT[game == i & season == 2023][order(timeSeconds)]
   
   temp[, homeState := 0]
   temp[, awayState := 0]
@@ -230,7 +238,7 @@ for(i in 1:length(Allsv22Shotmaps)){
   tempHome[, Home := 1]
   tempHome[, timeState := time - shift(time, fill = 0)]
   tempHome[.N, timeState := ifelse(time > (93*60), timeState + 60, (93*60) - time)]
-  
+  tempHome[, game := i]
   
   tempAway = temp[, .(time = max(timeSeconds), xG = sum(ifelse(isHome == FALSE, xG, 0)),
                       xG_Against = sum(ifelse(isHome == TRUE, xG, 0))), .(sequence, state = awayState)]
@@ -239,6 +247,7 @@ for(i in 1:length(Allsv22Shotmaps)){
   tempAway[, Home := 0]
   tempAway[, timeState := time - shift(time, fill = 0)]
   tempAway[.N, timeState := ifelse(time > (93*60), timeState + 60, (93*60) - time)]
+  tempAway[, game := i]
   
   state_data[[i]] = rbind(tempHome, tempAway)
 }
@@ -259,7 +268,7 @@ ggplot(state_data[, sum(timeState), .(stateClass, Team)],
 
 
 
-xG_stateDraw = state_data[stateClass == 1, .(xG = sum(xG), xG_Against = sum(xG_Against), time = sum(timeState) / 3600), Team]
+xG_stateDraw = state_data[stateClass == 0, .(xG = sum(xG), xG_Against = sum(xG_Against), time = sum(timeState) / 3600), Team]
 
 ggplot(xG_stateDraw, aes(x = time, y = xG - xG_Against)) + 
   geom_hline(yintercept = 0) + 
@@ -272,8 +281,6 @@ ggplot(xG_stateDraw, aes(x = xG / time, y = xG_Against / time)) +
   ggrepel::geom_label_repel(aes(label = Team)) +
   theme_bw() +
   scale_y_reverse()
-
-
 
 state_data[, .(xG = sum(xG), xG_Against = sum(xG_Against), time = sum(timeState) / 3600), .(Team, stateClass)]
 ggplot(state_data[, .(xGDiff = (sum(xG) - sum(xG_Against)) / (sum(timeState) / 3600)), .(Team, stateClass)],
@@ -302,6 +309,84 @@ summary(gamModelDraw)
 gamModelDraw$coefficients[2] = gamModelDraw$coefficients[2] / 3
 
 save(gamModelDraw, file = "gamModelDraw.rda")
+
+
+# Weighted xG given state
+state_data[, xG_state := ifelse(abs(state) == 1, xG * 0.85, xG)]
+state_data[, xG_state := ifelse(abs(state) > 1, xG * 0.5, xG_state)]
+
+w_state_data = state_data[, .(xG = sum(xG_state)), .(Team, Opponent, Home)]
+
+season_state_xG = merge(state_data[, .(xG = sum(xG_state)), .(game, Team)],
+                        state_data[, .(xG_Against = sum(xG_state)), .(game, Team = Opponent)],
+                        by = c("game", "Team"))
+season_state_xG[, round := 1:.N, Team]
+season_state_xG = season_state_xG[!is.na(game)]
+
+season_state_xG[, roll_diff := frollmean(xG - xG_Against, 6), Team]
+
+ggplot(season_state_xG,
+       aes(x = round, y = xG - xG_Against)) +
+  geom_hline(yintercept = 0) + 
+  geom_line( alpha = .5) +
+  geom_smooth(se = FALSE, linetype ="dotdash", size = 1) +
+  theme_bw() + 
+  theme(legend.key.width = unit(1, "cm"), legend.position = "top",
+        legend.background = element_rect(fill = "#00000010", color = "grey72")) +
+  facet_wrap(~Team)
+
+
+ggplot(season_state_xG,
+       aes(x = round, y = roll_diff)) +
+  geom_hline(yintercept = 0) + 
+  geom_line(size = 1) +
+  geom_point() + 
+  # geom_smooth(se = FALSE, linetype ="dotdash", size = 1) +
+  theme_bw() + 
+  theme(legend.key.width = unit(1, "cm"), legend.position = "top",
+        legend.background = element_rect(fill = "#00000010", color = "grey72")) +
+  facet_wrap(~Team)
+
+
+glm_w_state <- stats::glm.fit(x=xmat, y=yy,
+                          start=c(mean(log(yy+0.5)-0.2), rep(0, ncol(xmat)-1)),
+                          family=glm_family,
+                          control = list(maxit=100, epsilon = 1e-9),
+                          intercept = FALSE)
+
+glm_w_state = glm(xG ~ Home + Team + Opponent,
+                   family = stats::gaussian(link='log'), data = w_state_data)
+summary(glm_w_state)
+
+ht = "IF Elfsborg"
+at = "IFK Värnamo"
+
+pred_home = predictions(glm_w_state, data.table(Home = 1, Team = ht, Opponent = at), type = "response")
+pred_away = predictions(glm_w_state, data.table(Home = 0, Team = at, Opponent = ht), type = "response")
+
+pred_xg_home = pred_home$estimate
+pred_xg_away = pred_away$estimate
+
+pred_std_home = pred_home$conf.high - pred_home$conf.low
+pred_std_away = pred_away$conf.high - pred_away$conf.low
+
+
+predDT = data.table(predHome = rnorm(n = 10000, mean = pred_xg_home, sd = pred_std_home),
+                    predAway = rnorm(n = 10000, mean = pred_xg_away, sd = pred_std_away))
+
+predDT[predHome < 0, predHome := 0]
+predDT[predAway < 0, predAway := 0]
+
+predDT[, c("goalsHome", "goalsAway") := .(round(predHome, 0), round(predAway, 0))]
+predDT[, Sign := sign(goalsHome - goalsAway)]
+predDT[, Sign2 := sign(mround(predHome, .5) - mround(predAway, .5))]
+
+# predDT[, .(Prob = .N / predDT[, .N], Odds = 1 / ( .N / predDT[, .N])), Sign]
+
+predDT[, .(Prob = .N / predDT[, .N], Odds = 1 / ( .N / predDT[, .N])), Sign2]
+
+
+
 
 
 # Predict a game
